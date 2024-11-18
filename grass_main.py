@@ -80,8 +80,23 @@ def run():
         # Navigate to a webpage
         logging.info(f"Navigating to {extension_url} website...")
         driver.get(extension_url)
-        time.sleep(random.randint(3, 7))
+        time.sleep(5)  # Wait for page load
+
+        # Print content before handling cookie banner
+        logging.info("=== BEFORE COOKIE BANNER ===")
+        logging.info(f"Current URL: {driver.current_url}")
+        logging.info("Current page HTML:")
+        logging.info(driver.page_source)
+
         handle_cookie_banner(driver)
+        time.sleep(3)  # Wait for any changes after cookie handling
+
+        # Print content after handling cookie banner
+        logging.info("=== AFTER COOKIE BANNER ===")
+        logging.info(f"Current URL: {driver.current_url}")
+        logging.info("Current page HTML:")
+        logging.info(driver.page_source)
+
         logging.info("Entering credentials...")
 
         # Wait for page load and try multiple selectors
