@@ -3,6 +3,9 @@ import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 import random
 import time
 import logging
@@ -80,9 +83,38 @@ def run():
         time.sleep(random.randint(3, 7))
         handle_cookie_banner(driver)
         logging.info("Entering credentials...")
-        username = driver.find_element(By.NAME, "user")
+
+        # Wait for page load and try multiple selectors
+        username = None
+        selectors = [
+            (By.CSS_SELECTOR, "input[name='user']"),
+            (By.ID, "field-:r9:"),
+            (By.CLASS_NAME, "chakra-input"),
+            (By.CSS_SELECTOR, "input[placeholder='Username or Email']"),
+        ]
+
+        for by, selector in selectors:
+            try:
+                username = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((by, selector))
+                )
+                if username:
+                    logging.info(f"Found username field using selector: {selector}")
+                    break
+            except TimeoutException:
+                continue
+
+        if not username:
+            raise Exception("Could not find username field with any selector")
+
+        username.clear()
         username.send_keys(email)
-        passwd = driver.find_element(By.NAME, "password")
+
+        # Find password field
+        passwd = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.NAME, "password"))
+        )
+        passwd.clear()
         passwd.send_keys(password)
 
         logging.info("Clicking the login button...")
@@ -104,6 +136,8 @@ def run():
         logging.info("Earning...")
     except Exception as e:
         logging.error(f"An error occurred: {e}")
+        logging.debug(f"Current URL: {driver.current_url}")
+        logging.debug(f"Page source: {driver.page_source}")
         driver.quit()
         time.sleep(60)
         run()
