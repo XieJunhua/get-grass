@@ -91,10 +91,18 @@ def run():
             (By.ID, "field-:r9:"),
             (By.CLASS_NAME, "chakra-input"),
             (By.CSS_SELECTOR, "input[placeholder='Username or Email']"),
+            (By.CSS_SELECTOR, "input[type='email']"),
+            (By.CSS_SELECTOR, "input[type='text']"),
+            (By.XPATH, "//input[@placeholder='Email' or @placeholder='Username']"),
+            (
+                By.XPATH,
+                "//input[contains(@class, 'login') or contains(@class, 'email')]",
+            ),
         ]
 
         for by, selector in selectors:
             try:
+                logging.info(f"Trying to find username field with selector: {selector}")
                 username = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((by, selector))
                 )
@@ -102,9 +110,13 @@ def run():
                     logging.info(f"Found username field using selector: {selector}")
                     break
             except TimeoutException:
+                logging.warning(f"Selector {selector} not found")
                 continue
 
         if not username:
+            logging.error("Could not find username field with any selector")
+            logging.debug("Current page HTML:")
+            logging.debug(driver.page_source)
             raise Exception("Could not find username field with any selector")
 
         username.clear()
