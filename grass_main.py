@@ -5,7 +5,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 import random
 import time
 import logging
@@ -17,7 +17,6 @@ def setup_logging():
     )
 
 
-# function to handle cookie banner: If a cookie banner is present press the button containing the accept text
 def handle_cookie_banner(driver):
     """
     Handle the cookie banner by clicking the "Accept" button if it's present.
@@ -38,6 +37,32 @@ def handle_cookie_banner(driver):
         pass
 
 
+def setup_driver(chrome_options=None):
+    if chrome_options is None:
+        chrome_options = Options()
+
+    # Modify WebDriver characteristics
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
+
+    # Disable automation features
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+
+    try:
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.execute_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+        return driver
+    except WebDriverException as e:
+        logging.error(f"Failed to initialize WebDriver: {e}")
+        raise
+
+
 def run():
     setup_logging()
     logging.info("Starting the script...")
@@ -53,11 +78,11 @@ def run():
     proxy_pass = os.getenv("PROXY_PASS")
 
     # Check if credentials are provided
-    if not email or not password:
+    if not all([email, password, extension_id, extension_url]):
         logging.error(
-            "No username or password provided. Please set the GRASS_USER and GRASS_PASS environment variables."
+            "Missing required environment variables. Please check configuration."
         )
-        return  # Exit the script if credentials are not provided
+        return
 
     chrome_options = Options()
     chrome_options.add_extension(f"./{extension_id}.crx")
@@ -67,39 +92,32 @@ def run():
     chrome_options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0"
     )
-    chrome_options.add_argument(
-        f"--proxy-server=http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
-    )
 
-    # Initialize the WebDriver
-    driver = webdriver.Chrome(options=chrome_options)
-    ipinfo = driver.get("http://ip-api.com/json")  # Or any other IP check service
-    logging.info(f"Proxy connection successful: {ipinfo}")
+    if all([proxy_host, proxy_port, proxy_user, proxy_pass]):
+        chrome_options.add_argument(
+            f"--proxy-server=http://{proxy_user}:{proxy_pass}@{proxy_host}:{proxy_port}"
+        )
 
+    driver = None
     try:
-        # Navigate to a webpage
-        logging.info(f"Navigating to {extension_url} website...")
-        driver.get(extension_url)
-        time.sleep(5)  # Wait for page load
+        driver = setup_driver(chrome_options)
 
-        # Print content before handling cookie banner
-        logging.info("=== BEFORE COOKIE BANNER ===")
-        logging.info(f"Current URL: {driver.current_url}")
-        logging.info("Current page HTML:")
-        logging.info(driver.page_source)
+        # Check proxy connection
+        driver.get("http://ip-api.com/json")
+        time.sleep(3)
+        logging.info("Proxy connection successful")
+
+        # Navigate to extension URL
+        logging.info(f"Navigating to {extension_url}...")
+        driver.get(extension_url)
+        time.sleep(5)
 
         handle_cookie_banner(driver)
-        time.sleep(3)  # Wait for any changes after cookie handling
-
-        # Print content after handling cookie banner
-        logging.info("=== AFTER COOKIE BANNER ===")
-        logging.info(f"Current URL: {driver.current_url}")
-        logging.info("Current page HTML:")
-        logging.info(driver.page_source)
+        time.sleep(3)
 
         logging.info("Entering credentials...")
 
-        # Wait for page load and try multiple selectors
+        # Find username field with multiple selectors
         username = None
         selectors = [
             (By.CSS_SELECTOR, "input[name='user']"),
@@ -117,7 +135,6 @@ def run():
 
         for by, selector in selectors:
             try:
-                logging.info(f"Trying to find username field with selector: {selector}")
                 username = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((by, selector))
                 )
@@ -125,57 +142,69 @@ def run():
                     logging.info(f"Found username field using selector: {selector}")
                     break
             except TimeoutException:
-                logging.warning(f"Selector {selector} not found")
                 continue
 
         if not username:
-            logging.error("Could not find username field with any selector")
-            logging.debug("Current page HTML:")
-            logging.debug(driver.page_source)
-            raise Exception("Could not find username field with any selector")
+            raise Exception("Could not find username field")
 
         username.clear()
         username.send_keys(email)
 
-        # Find password field
+        # Find and fill password field
         passwd = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "password"))
         )
         passwd.clear()
         passwd.send_keys(password)
 
-        logging.info("Clicking the login button...")
-        button = driver.find_element(By.XPATH, "//button")
-        button.click()
-        logging.info("Waiting response...")
+        # Click login button
+        logging.info("Clicking login button...")
+        login_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable(
+                (
+                    By.XPATH,
+                    "//button[contains(text(), 'Login') or contains(text(), 'Sign in')]",
+                )
+            )
+        )
+        login_button.click()
 
-        time.sleep(random.randint(10, 50))
-        logging.info("Accessing extension settings page...")
+        # Wait for login
+        time.sleep(random.randint(10, 20))
+
+        # Access extension page
+        logging.info("Accessing extension settings...")
         driver.get(f"chrome-extension://{extension_id}/index.html")
         time.sleep(random.randint(3, 7))
 
-        logging.info("Clicking the extension button...")
-        button = driver.find_element(By.XPATH, "//button")
-        button.click()
+        # Click extension button
+        extension_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button"))
+        )
+        extension_button.click()
 
-        logging.info("Logged in successfully.")
+        logging.info("Successfully logged in and initialized extension")
         handle_cookie_banner(driver)
-        logging.info("Earning...")
+        logging.info("Starting earning process...")
+
+        # Main loop
+        while True:
+            try:
+                time.sleep(3600)
+            except KeyboardInterrupt:
+                logging.info("Stopping script...")
+                if driver:
+                    driver.quit()
+                break
+
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        logging.debug(f"Current URL: {driver.current_url}")
-        logging.debug(f"Page source: {driver.page_source}")
-        driver.quit()
+        if driver:
+            logging.debug(f"Current URL: {driver.current_url}")
+            driver.quit()
         time.sleep(60)
         run()
 
-    while True:
-        try:
-            time.sleep(3600)
-        except KeyboardInterrupt:
-            logging.info("Stopping the script...")
-            driver.quit()
-            break
 
-
-run()
+if __name__ == "__main__":
+    run()
